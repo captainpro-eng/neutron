@@ -62,8 +62,7 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
         self.assertEqual('xyz', of._send_msg("abc"))
 
-        mock_send_msg_retry.assert_called_once_with(
-            app, "abc", None, False)
+        mock_send_msg_retry.assert_called_once_with("abc", None, False)
 
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
     def test__send_msg_osken_exc(self, mock_send_msg_retry):
@@ -76,8 +75,7 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
         self.assertRaises(RuntimeError, of._send_msg, "abc")
 
-        mock_send_msg_retry.assert_called_once_with(
-            app, "abc", None, False)
+        mock_send_msg_retry.assert_called_once_with("abc", None, False)
 
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
     def test__send_msg_timeout(self, mock_send_msg_retry):
@@ -90,8 +88,38 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
         self.assertRaises(RuntimeError, of._send_msg, "abc")
 
-        mock_send_msg_retry.assert_called_once_with(
-            app, "abc", None, False)
+        mock_send_msg_retry.assert_called_once_with("abc", None, False)
+
+    @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
+    def test__send_msg_timeout_invalidates_cached_dpid(self,
+                                                       mock_send_msg_retry):
+        cfg.CONF.set_override('of_request_timeout', 1, group='OVS')
+        mock_send_msg_retry.side_effect = lambda *a, **b: time.sleep(2)
+
+        app = mock.MagicMock()
+        of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
+        of._cached_dpid = 11
+
+        self.assertRaises(RuntimeError, of._send_msg, "abc")
+        self.assertIsNone(of._cached_dpid)
+
+    @mock.patch('os_ken.app.ofctl.api.send_msg')
+    @mock.patch('os_ken.app.ofctl.api.get_datapath')
+    def test__send_msg_retry_replaces_stale_datapath(self, mock_get_dp,
+                                                     mock_send_msg):
+        app = mock.MagicMock()
+        old_dp = mock.Mock(id=10)
+        new_dp = mock.Mock(id=10)
+        msg = mock.Mock(datapath=old_dp)
+        mock_get_dp.return_value = new_dp
+        mock_send_msg.return_value = 'xyz'
+
+        of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
+        self.assertEqual('xyz', of._send_msg_retry(msg, None, False))
+
+        self.assertEqual(new_dp, msg.datapath)
+        mock_get_dp.assert_called_once_with(app, 10)
+        mock_send_msg.assert_called_once_with(app, msg, None, False)
 
     def test_normal_bundle_context(self):
         self.assertIsNone(self.br.active_bundle)
