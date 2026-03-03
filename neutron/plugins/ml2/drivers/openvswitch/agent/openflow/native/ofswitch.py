@@ -18,6 +18,7 @@ import functools
 import queue
 import secrets
 import threading
+import time
 
 import netaddr
 from neutron_lib import exceptions
@@ -61,9 +62,9 @@ class OpenFlowSwitchMixin:
         self.active_bundles = set()
         super().__init__(*args, **kwargs)
 
-    def _get_dp_by_dpid(self, dpid_int):
+    def _get_dp_by_dpid(self, dpid_int, timeout_sec=None):
         """Get os-ken datapath object for the switch."""
-        timeout_sec = cfg.CONF.OVS.of_connect_timeout
+        timeout_sec = timeout_sec or cfg.CONF.OVS.of_connect_timeout
         start_time = timeutils.now()
         while True:
             dp = ofctl_api.get_datapath(self._app, dpid_int)
@@ -76,6 +77,7 @@ class OpenFlowSwitchMixin:
                 LOG.error(m)
                 # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
                 raise RuntimeError(m)
+            time.sleep(0.1)
         return dp
 
     def _ensure_datapath(self, msg):
@@ -135,6 +137,7 @@ class OpenFlowSwitchMixin:
             qresult.put(_TimeoutException())
 
         worker_thread = threading.Thread(target=worker)
+        worker_thread.daemon = True
         worker_thread.start()
 
         timer = threading.Timer(timeout_sec, timeout_handler)
@@ -163,7 +166,10 @@ class OpenFlowSwitchMixin:
             raise RuntimeError(m)
         finally:
             timer.cancel()
-            worker_thread.join()
+            worker_thread.join(timeout=1)
+            if worker_thread.is_alive():
+                LOG.warning("ofctl worker thread did not stop after timeout "
+                            "for request %s", msg)
 
         LOG.debug("ofctl request %(request)s result %(result)s",
                   {"request": msg, "result": result})
@@ -208,8 +214,8 @@ class OpenFlowSwitchMixin:
                               out_port=ofp.OFPP_ANY)
         self._send_msg(msg, active_bundle=active_bundle)
 
-    def dump_flows(self, table_id=None):
-        (dp, ofp, ofpp) = self._get_dp()
+    def dump_flows(self, table_id=None, timeout_sec=None):
+        (dp, ofp, ofpp) = self._get_dp(timeout_sec=timeout_sec)
         if table_id is None:
             table_id = ofp.OFPTT_ALL
         msg = ofpp.OFPFlowStatsRequest(dp, table_id=table_id)

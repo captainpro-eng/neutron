@@ -53,6 +53,15 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         except Exception as e:
             self.assertIsInstance(e, AttributeError)
 
+
+    @mock.patch('os_ken.app.ofctl.api.get_datapath', return_value=None)
+    def test__get_dp_by_dpid_honors_timeout(self, _mock_get_dp):
+        app = mock.MagicMock()
+
+        of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
+        self.assertRaises(RuntimeError, of._get_dp_by_dpid, 1,
+                          timeout_sec=-1)
+
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
     def test__send_msg_success(self, mock_send_msg_retry):
         mock_send_msg_retry.return_value = 'xyz'
