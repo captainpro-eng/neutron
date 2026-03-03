@@ -78,14 +78,28 @@ class OpenFlowSwitchMixin:
                 raise RuntimeError(m)
         return dp
 
-    @staticmethod
+    def _ensure_datapath(self, msg):
+        if not hasattr(msg, 'datapath'):
+            return
+
+        dpid = getattr(msg.datapath, 'id', None)
+        if dpid is None:
+            return
+
+        datapath = ofctl_api.get_datapath(self._app, dpid)
+        if datapath is None:
+            raise ofctl_exc.InvalidDatapath(result='unknown dpid %s' % dpid)
+
+        msg.datapath = datapath
+
     @tenacity.retry(
         retry=tenacity.retry_if_exception_type(ofctl_exc.InvalidDatapath),
         wait=tenacity.wait_exponential(multiplier=0.02, max=1),
         stop=tenacity.stop_after_delay(5),
         reraise=True)
-    def _send_msg_retry(app, msg, reply_cls, reply_multi):
-        return ofctl_api.send_msg(app, msg, reply_cls, reply_multi)
+    def _send_msg_retry(self, msg, reply_cls, reply_multi):
+        self._ensure_datapath(msg)
+        return ofctl_api.send_msg(self._app, msg, reply_cls, reply_multi)
 
     def _send_msg(self, msg, reply_cls=None, reply_multi=False,
                   active_bundle=None):
@@ -94,6 +108,10 @@ class OpenFlowSwitchMixin:
 
         class _TimeoutException(exceptions.NeutronException):
             pass
+
+        def _invalidate_cached_datapath():
+            if hasattr(self, '_cached_dpid'):
+                self._cached_dpid = None
 
         def worker():
             try:
@@ -106,7 +124,7 @@ class OpenFlowSwitchMixin:
                     bundle_msg = msg
 
                 result = self._send_msg_retry(
-                    self._app, bundle_msg, reply_cls, reply_multi)
+                    bundle_msg, reply_cls, reply_multi)
                 qresult.put(result)
 
                 return True
@@ -117,6 +135,7 @@ class OpenFlowSwitchMixin:
             qresult.put(_TimeoutException())
 
         worker_thread = threading.Thread(target=worker)
+        worker_thread.daemon = True
         worker_thread.start()
 
         timer = threading.Timer(timeout_sec, timeout_handler)
@@ -127,6 +146,7 @@ class OpenFlowSwitchMixin:
             if isinstance(result, Exception):
                 raise result
         except os_ken_exc.OSKenException as e:
+            _invalidate_cached_datapath()
             m = _("ofctl request %(request)s error %(error)s") % {
                 "request": msg,
                 "error": e,
@@ -135,6 +155,7 @@ class OpenFlowSwitchMixin:
             # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
             raise RuntimeError(m)
         except _TimeoutException:
+            _invalidate_cached_datapath()
             m = _("ofctl request %(request)s timed out") % {
                 "request": msg,
             }
@@ -143,7 +164,10 @@ class OpenFlowSwitchMixin:
             raise RuntimeError(m)
         finally:
             timer.cancel()
-            worker_thread.join()
+            worker_thread.join(timeout=1)
+            if worker_thread.is_alive():
+                LOG.warning("ofctl worker thread did not stop after timeout "
+                            "for request %s", msg)
 
         LOG.debug("ofctl request %(request)s result %(result)s",
                   {"request": msg, "result": result})
