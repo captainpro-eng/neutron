@@ -35,6 +35,24 @@ class OVSIntegrationBridgeTest(ovs_bridge_test_base.OVSBridgeTestBase):
         self.setup_bridge_mock('br-int', self.br_int_cls)
         self.stamp = self.br.default_cookie
 
+    def test_check_canary_table_uses_short_timeout(self):
+        with mock.patch.object(self.br, 'dump_flows',
+                               return_value=['flow']) as dump_flows:
+            status = self.br.check_canary_table()
+
+        self.assertEqual(ovs_constants.OVS_NORMAL, status)
+        dump_flows.assert_called_once_with(ovs_constants.CANARY_TABLE,
+                                           timeout_sec=1)
+
+    def test_check_canary_table_restarted(self):
+        with mock.patch.object(self.br, 'dump_flows',
+                               return_value=[]) as dump_flows:
+            status = self.br.check_canary_table()
+
+        self.assertEqual(ovs_constants.OVS_RESTARTED, status)
+        dump_flows.assert_called_once_with(ovs_constants.CANARY_TABLE,
+                                           timeout_sec=1)
+
     def test_setup_default_table(self):
         self.br.setup_default_table(enable_openflow_dhcp=True,
                                     enable_dhcpv6=True)

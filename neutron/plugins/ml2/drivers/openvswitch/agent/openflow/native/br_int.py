@@ -166,7 +166,7 @@ class OVSIntegrationBridge(ovs_bridge.OVSAgentBridge,
 
     def check_canary_table(self):
         try:
-            flows = self.dump_flows(constants.CANARY_TABLE)
+            flows = self.dump_flows(constants.CANARY_TABLE, timeout_sec=1)
         except RuntimeError:
             LOG.exception("Failed to communicate with the switch")
             return constants.OVS_DEAD

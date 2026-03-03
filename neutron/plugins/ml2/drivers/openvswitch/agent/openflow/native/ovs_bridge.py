@@ -38,7 +38,7 @@ class OVSAgentBridge(ofswitch.OpenFlowSwitchMixin,
 
     _cached_dpid = None
 
-    def _get_dp(self):
+    def _get_dp(self, timeout_sec=None):
         """Get (dp, ofp, ofpp) tuple for the switch.
 
         A convenient method for openflow message composers.
@@ -52,7 +52,8 @@ class OVSAgentBridge(ofswitch.OpenFlowSwitchMixin,
                     raise RuntimeError(_("Unknown datapath id."))
                 self._cached_dpid = int(dpid, 16)
             try:
-                dp = self._get_dp_by_dpid(self._cached_dpid)
+                dp = self._get_dp_by_dpid(self._cached_dpid,
+                                           timeout_sec=timeout_sec)
                 return dp, dp.ofproto, dp.ofproto_parser
             except RuntimeError:
                 with excutils.save_and_reraise_exception() as ctx:
