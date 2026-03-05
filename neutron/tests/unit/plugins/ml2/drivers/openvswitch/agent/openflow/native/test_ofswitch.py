@@ -75,7 +75,7 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
         self.assertRaises(RuntimeError, of._send_msg, "abc")
 
-        mock_send_msg_retry.assert_called_once_with("abc", None, False)
+        self.assertEqual(2, mock_send_msg_retry.call_count)
 
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
     def test__send_msg_timeout(self, mock_send_msg_retry):
@@ -88,7 +88,7 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
         self.assertRaises(RuntimeError, of._send_msg, "abc")
 
-        mock_send_msg_retry.assert_called_once_with("abc", None, False)
+        self.assertEqual(2, mock_send_msg_retry.call_count)
 
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
     def test__send_msg_timeout_invalidates_cached_dpid(self,
@@ -104,15 +104,26 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         self.assertIsNone(of._cached_dpid)
 
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
-    def test__send_msg_runtime_error_invalidates_cached_dpid(
+    def test__send_msg_timeout_recovers_after_single_retry(
             self, mock_send_msg_retry):
-        mock_send_msg_retry.side_effect = RuntimeError('boom')
+        cfg.CONF.set_override('of_request_timeout', 1, group='OVS')
+
+        responses = iter([lambda *a, **b: time.sleep(2), 'xyz'])
+
+        def side_effect(*args, **kwargs):
+            response = next(responses)
+            if callable(response):
+                return response(*args, **kwargs)
+            return response
+
+        mock_send_msg_retry.side_effect = side_effect
 
         app = mock.MagicMock()
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
         of._cached_dpid = 12
 
-        self.assertRaises(RuntimeError, of._send_msg, "abc")
+        self.assertEqual('xyz', of._send_msg("abc"))
+        self.assertEqual(2, mock_send_msg_retry.call_count)
         self.assertIsNone(of._cached_dpid)
 
     @mock.patch('os_ken.app.ofctl.api.send_msg')
