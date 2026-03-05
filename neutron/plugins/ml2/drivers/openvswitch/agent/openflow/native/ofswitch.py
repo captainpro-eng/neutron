@@ -102,7 +102,7 @@ class OpenFlowSwitchMixin:
         return ofctl_api.send_msg(self._app, msg, reply_cls, reply_multi)
 
     def _send_msg(self, msg, reply_cls=None, reply_multi=False,
-                  active_bundle=None):
+                  active_bundle=None, _retry=False):
         timeout_sec = cfg.CONF.OVS.of_request_timeout
         qresult = queue.Queue()
 
@@ -140,6 +140,9 @@ class OpenFlowSwitchMixin:
         timer = threading.Timer(timeout_sec, timeout_handler)
         timer.start()
 
+        result = None
+        exc = None
+        retry_with_fresh_datapath = False
         try:
             result = qresult.get()
             if isinstance(result, Exception):
@@ -152,7 +155,8 @@ class OpenFlowSwitchMixin:
             }
             LOG.error(m)
             # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
-            raise RuntimeError(m)
+            exc = RuntimeError(m)
+            retry_with_fresh_datapath = True
         except _TimeoutException:
             _invalidate_cached_datapath()
             m = _("ofctl request %(request)s timed out") % {
@@ -160,10 +164,26 @@ class OpenFlowSwitchMixin:
             }
             LOG.error(m)
             # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
-            raise RuntimeError(m)
+            exc = RuntimeError(m)
+            retry_with_fresh_datapath = True
         finally:
             timer.cancel()
             worker_thread.join()
+
+        if (retry_with_fresh_datapath and not _retry and
+                active_bundle is None):
+            if hasattr(self, '_get_dp'):
+                try:
+                    self._get_dp()
+                except Exception:
+                    LOG.debug('Datapath is still not ready before retry',
+                              exc_info=True)
+            LOG.info("Retrying ofctl request with refreshed datapath: %s", msg)
+            return self._send_msg(msg, reply_cls, reply_multi,
+                                  active_bundle=active_bundle, _retry=True)
+
+        if exc:
+            raise exc
 
         LOG.debug("ofctl request %(request)s result %(result)s",
                   {"request": msg, "result": result})
