@@ -104,7 +104,7 @@ class OpenFlowSwitchMixin:
     def _send_msg(self, msg, reply_cls=None, reply_multi=False,
                   active_bundle=None):
         timeout_sec = cfg.CONF.OVS.of_request_timeout
-        qresult = queue.Queue()
+        max_retries = 2 if active_bundle is None else 0
 
         class _TimeoutException(exceptions.NeutronException):
             pass
@@ -113,61 +113,90 @@ class OpenFlowSwitchMixin:
             if hasattr(self, '_cached_dpid'):
                 self._cached_dpid = None
 
-        def worker():
+        for attempt in range(max_retries + 1):
+            qresult = queue.Queue()
+
+            def worker():
+                try:
+                    if active_bundle is not None:
+                        (dp, ofp, ofpp) = self._get_dp()
+                        bundle_msg = ofpp.ONFBundleAddMsg(
+                            dp, active_bundle['id'],
+                            active_bundle['bundle_flags'], msg, [])
+                    else:
+                        bundle_msg = msg
+
+                    result = self._send_msg_retry(
+                        bundle_msg, reply_cls, reply_multi)
+                    qresult.put(result)
+
+                    return True
+                except Exception as e:
+                    qresult.put(e)
+
+            def timeout_handler():
+                qresult.put(_TimeoutException())
+
+            worker_thread = threading.Thread(target=worker)
+            worker_thread.start()
+
+            timer = threading.Timer(timeout_sec, timeout_handler)
+            timer.start()
+
             try:
-                if active_bundle is not None:
-                    (dp, ofp, ofpp) = self._get_dp()
-                    bundle_msg = ofpp.ONFBundleAddMsg(
-                        dp, active_bundle['id'],
-                        active_bundle['bundle_flags'], msg, [])
-                else:
-                    bundle_msg = msg
+                result = qresult.get()
+                if isinstance(result, Exception):
+                    raise result
+            except os_ken_exc.OSKenException as e:
+                _invalidate_cached_datapath()
+                m = _("ofctl request %(request)s error %(error)s") % {
+                    "request": msg,
+                    "error": e,
+                }
+                LOG.error(m)
+                if attempt < max_retries:
+                    if hasattr(self, '_get_dp'):
+                        try:
+                            self._get_dp()
+                        except Exception:
+                            LOG.debug('Datapath is still not ready before '
+                                      'retry', exc_info=True)
+                    LOG.info('Retrying ofctl request with refreshed datapath '
+                             '(%(attempt)s/%(max)s): %(request)s',
+                             {'attempt': attempt + 1,
+                              'max': max_retries,
+                              'request': msg})
+                    continue
+                # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
+                raise RuntimeError(m)
+            except _TimeoutException:
+                _invalidate_cached_datapath()
+                m = _("ofctl request %(request)s timed out") % {
+                    "request": msg,
+                }
+                LOG.error(m)
+                if attempt < max_retries:
+                    if hasattr(self, '_get_dp'):
+                        try:
+                            self._get_dp()
+                        except Exception:
+                            LOG.debug('Datapath is still not ready before '
+                                      'retry', exc_info=True)
+                    LOG.info('Retrying ofctl request with refreshed datapath '
+                             '(%(attempt)s/%(max)s): %(request)s',
+                             {'attempt': attempt + 1,
+                              'max': max_retries,
+                              'request': msg})
+                    continue
+                # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
+                raise RuntimeError(m)
+            finally:
+                timer.cancel()
+                worker_thread.join()
 
-                result = self._send_msg_retry(
-                    bundle_msg, reply_cls, reply_multi)
-                qresult.put(result)
-
-                return True
-            except Exception as e:
-                qresult.put(e)
-
-        def timeout_handler():
-            qresult.put(_TimeoutException())
-
-        worker_thread = threading.Thread(target=worker)
-        worker_thread.start()
-
-        timer = threading.Timer(timeout_sec, timeout_handler)
-        timer.start()
-
-        try:
-            result = qresult.get()
-            if isinstance(result, Exception):
-                raise result
-        except os_ken_exc.OSKenException as e:
-            _invalidate_cached_datapath()
-            m = _("ofctl request %(request)s error %(error)s") % {
-                "request": msg,
-                "error": e,
-            }
-            LOG.error(m)
-            # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
-            raise RuntimeError(m)
-        except _TimeoutException:
-            _invalidate_cached_datapath()
-            m = _("ofctl request %(request)s timed out") % {
-                "request": msg,
-            }
-            LOG.error(m)
-            # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
-            raise RuntimeError(m)
-        finally:
-            timer.cancel()
-            worker_thread.join()
-
-        LOG.debug("ofctl request %(request)s result %(result)s",
-                  {"request": msg, "result": result})
-        return result
+            LOG.debug("ofctl request %(request)s result %(result)s",
+                      {"request": msg, "result": result})
+            return result
 
     @staticmethod
     def _match(_ofp, ofpp, match, **match_kwargs):
