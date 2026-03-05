@@ -104,7 +104,7 @@ class OpenFlowSwitchMixin:
     def _send_msg(self, msg, reply_cls=None, reply_multi=False,
                   active_bundle=None):
         timeout_sec = cfg.CONF.OVS.of_request_timeout
-        max_retries = 2 if active_bundle is None else 0
+        unlimited_retries = active_bundle is None
 
         class _TimeoutException(exceptions.NeutronException):
             pass
@@ -113,7 +113,8 @@ class OpenFlowSwitchMixin:
             if hasattr(self, '_cached_dpid'):
                 self._cached_dpid = None
 
-        for attempt in range(max_retries + 1):
+        attempt = 0
+        while True:
             qresult = queue.Queue()
 
             def worker():
@@ -154,7 +155,7 @@ class OpenFlowSwitchMixin:
                     "error": e,
                 }
                 LOG.error(m)
-                if attempt < max_retries:
+                if unlimited_retries:
                     if hasattr(self, '_get_dp'):
                         try:
                             self._get_dp()
@@ -162,10 +163,10 @@ class OpenFlowSwitchMixin:
                             LOG.debug('Datapath is still not ready before '
                                       'retry', exc_info=True)
                     LOG.info('Retrying ofctl request with refreshed datapath '
-                             '(%(attempt)s/%(max)s): %(request)s',
+                             '#%(attempt)s: %(request)s',
                              {'attempt': attempt + 1,
-                              'max': max_retries,
                               'request': msg})
+                    attempt += 1
                     continue
                 # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
                 raise RuntimeError(m)
@@ -175,7 +176,7 @@ class OpenFlowSwitchMixin:
                     "request": msg,
                 }
                 LOG.error(m)
-                if attempt < max_retries:
+                if unlimited_retries:
                     if hasattr(self, '_get_dp'):
                         try:
                             self._get_dp()
@@ -183,10 +184,10 @@ class OpenFlowSwitchMixin:
                             LOG.debug('Datapath is still not ready before '
                                       'retry', exc_info=True)
                     LOG.info('Retrying ofctl request with refreshed datapath '
-                             '(%(attempt)s/%(max)s): %(request)s',
+                             '#%(attempt)s: %(request)s',
                              {'attempt': attempt + 1,
-                              'max': max_retries,
                               'request': msg})
+                    attempt += 1
                     continue
                 # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
                 raise RuntimeError(m)

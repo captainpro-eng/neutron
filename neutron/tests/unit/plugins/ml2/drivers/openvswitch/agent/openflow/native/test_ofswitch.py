@@ -67,8 +67,11 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
     def test__send_msg_osken_exc(self, mock_send_msg_retry):
 
-        mock_send_msg_retry.side_effect = os_ken_exc.OSKenException(
-            "something wrong!")
+        mock_send_msg_retry.side_effect = [
+            os_ken_exc.OSKenException("something wrong!"),
+            os_ken_exc.OSKenException("something wrong!"),
+            RuntimeError('boom')
+        ]
 
         app = mock.MagicMock()
 
@@ -81,7 +84,21 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
     def test__send_msg_timeout(self, mock_send_msg_retry):
         cfg.CONF.set_override('of_request_timeout', 1, group='OVS')
 
-        mock_send_msg_retry.side_effect = lambda *a, **b: time.sleep(2)
+        responses = iter([
+            lambda *a, **b: time.sleep(2),
+            lambda *a, **b: time.sleep(2),
+            RuntimeError('boom')
+        ])
+
+        def side_effect(*args, **kwargs):
+            response = next(responses)
+            if callable(response):
+                return response(*args, **kwargs)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        mock_send_msg_retry.side_effect = side_effect
 
         app = mock.MagicMock()
 
@@ -94,7 +111,21 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
     def test__send_msg_timeout_invalidates_cached_dpid(self,
                                                        mock_send_msg_retry):
         cfg.CONF.set_override('of_request_timeout', 1, group='OVS')
-        mock_send_msg_retry.side_effect = lambda *a, **b: time.sleep(2)
+        responses = iter([
+            lambda *a, **b: time.sleep(2),
+            lambda *a, **b: time.sleep(2),
+            RuntimeError('boom')
+        ])
+
+        def side_effect(*args, **kwargs):
+            response = next(responses)
+            if callable(response):
+                return response(*args, **kwargs)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        mock_send_msg_retry.side_effect = side_effect
 
         app = mock.MagicMock()
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
