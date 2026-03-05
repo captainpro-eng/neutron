@@ -126,6 +126,30 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         self.assertEqual(2, mock_send_msg_retry.call_count)
         self.assertIsNone(of._cached_dpid)
 
+    @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
+    def test__send_msg_timeout_waits_for_dp_before_retry(
+            self, mock_send_msg_retry):
+        cfg.CONF.set_override('of_request_timeout', 1, group='OVS')
+
+        responses = iter([lambda *a, **b: time.sleep(2), 'xyz'])
+
+        def side_effect(*args, **kwargs):
+            response = next(responses)
+            if callable(response):
+                return response(*args, **kwargs)
+            return response
+
+        mock_send_msg_retry.side_effect = side_effect
+
+        app = mock.MagicMock()
+        of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
+        of._cached_dpid = 13
+        of._get_dp = mock.Mock(return_value=(mock.Mock(), mock.Mock(),
+                                             mock.Mock()))
+
+        self.assertEqual('xyz', of._send_msg("abc"))
+        of._get_dp.assert_called_once_with()
+
     @mock.patch('os_ken.app.ofctl.api.send_msg')
     @mock.patch('os_ken.app.ofctl.api.get_datapath')
     def test__send_msg_retry_replaces_stale_datapath(self, mock_get_dp,

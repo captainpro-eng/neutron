@@ -172,6 +172,12 @@ class OpenFlowSwitchMixin:
 
         if (retry_with_fresh_datapath and not _retry and
                 active_bundle is None):
+            if hasattr(self, '_get_dp'):
+                try:
+                    self._get_dp()
+                except Exception:
+                    LOG.debug('Datapath is still not ready before retry',
+                              exc_info=True)
             LOG.info("Retrying ofctl request with refreshed datapath: %s", msg)
             return self._send_msg(msg, reply_cls, reply_multi,
                                   active_bundle=active_bundle, _retry=True)
