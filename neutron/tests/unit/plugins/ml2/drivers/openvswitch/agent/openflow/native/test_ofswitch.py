@@ -103,6 +103,18 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         self.assertRaises(RuntimeError, of._send_msg, "abc")
         self.assertIsNone(of._cached_dpid)
 
+    @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
+    def test__send_msg_runtime_error_invalidates_cached_dpid(
+            self, mock_send_msg_retry):
+        mock_send_msg_retry.side_effect = RuntimeError('boom')
+
+        app = mock.MagicMock()
+        of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
+        of._cached_dpid = 12
+
+        self.assertRaises(RuntimeError, of._send_msg, "abc")
+        self.assertIsNone(of._cached_dpid)
+
     @mock.patch('os_ken.app.ofctl.api.send_msg')
     @mock.patch('os_ken.app.ofctl.api.get_datapath')
     def test__send_msg_retry_replaces_stale_datapath(self, mock_get_dp,

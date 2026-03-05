@@ -161,6 +161,9 @@ class OpenFlowSwitchMixin:
             LOG.error(m)
             # NOTE(yamamoto): use RuntimeError for compat with ovs_lib
             raise RuntimeError(m)
+        except Exception:
+            _invalidate_cached_datapath()
+            raise
         finally:
             timer.cancel()
             worker_thread.join()
