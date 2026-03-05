@@ -75,7 +75,7 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
         self.assertRaises(RuntimeError, of._send_msg, "abc")
 
-        self.assertEqual(2, mock_send_msg_retry.call_count)
+        self.assertEqual(3, mock_send_msg_retry.call_count)
 
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
     def test__send_msg_timeout(self, mock_send_msg_retry):
@@ -88,7 +88,7 @@ class TestBundledOpenFlowBridge(base.BaseTestCase):
         of = ofswitch.OpenFlowSwitchMixin(os_ken_app=app)
         self.assertRaises(RuntimeError, of._send_msg, "abc")
 
-        self.assertEqual(2, mock_send_msg_retry.call_count)
+        self.assertEqual(3, mock_send_msg_retry.call_count)
 
     @mock.patch.object(ofswitch.OpenFlowSwitchMixin, '_send_msg_retry')
     def test__send_msg_timeout_invalidates_cached_dpid(self,
